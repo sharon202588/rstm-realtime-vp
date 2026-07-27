@@ -540,4 +540,3 @@ track_b = result.get("scoring_breakdown", {}).get("track_b_empathy")
 
 **重要提醒**：本项目用于临床沟通培训和质量评估，评分结果仅供参考，不应作为唯一评判标准。实际临床场景复杂多样，需要结合具体情况灵活应用。
 
-

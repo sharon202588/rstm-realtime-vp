@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>实时语音虚拟患者</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">RS</span>
+      <div>
+        <strong data-i18n="brandName">实时语音虚拟患者</strong>
+        <span data-i18n="brandSubtitle">RSTM-SP · 医学沟通训练</span>
+      </div>
+    </div>
+    <div class="header-status">
+      <span class="status-dot" id="bridgeDot"></span>
+      <span id="bridgeLabel" data-i18n="bridgeConnecting">正在连接本地服务</span>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <aside class="setup-panel">
+      <section class="panel-section">
+        <div class="section-heading">
+          <h2 data-i18n="sessionSetup">会话设置</h2>
+          <span class="mode-label">BBN</span>
+        </div>
+        <div class="metadata-row"><span data-i18n="participant">受试者</span><strong id="participantId">TEST-001</strong></div>
+        <div class="metadata-row"><span data-i18n="sessionId">会话编号</span><strong id="sessionId">待生成</strong></div>
+        <button class="secondary-button full-width" id="newSessionButton" type="button" data-i18n="newSession">生成新会话</button>
+      </section>
+
+      <section class="panel-section">
+        <label class="field-label" data-i18n="patientMode">患者交互模式</label>
+        <div class="segmented" role="group" data-i18n-aria="patientMode">
+          <button class="segment active" data-condition="adaptive" type="button" data-i18n="modeAdaptive">自适应患者</button>
+          <button class="segment" data-condition="control" type="button" data-i18n="modeFixed">固定 Level 3</button>
+        </div>
+        <label class="field-label" data-i18n="conversationLanguage">交流语言</label>
+        <div class="segmented" role="group" data-i18n-aria="conversationLanguage">
+          <button class="segment active" data-language="zh" type="button">中文</button>
+          <button class="segment" data-language="en" type="button">English</button>
+        </div>
+        <div class="setting-line">
+          <div><strong data-i18n="saveAudio">保存会话音频</strong><span data-i18n="audioFormats">医生与患者 WAV</span></div>
+          <span class="toggle checked" data-i18n-aria="saveAudio"></span>
+        </div>
+        <button class="secondary-button full-width researcher-button" id="researcherProfileButton" type="button" data-i18n="researcherProfile">研究者查看患者设定</button>
+      </section>
+
+      <section class="panel-section connection-list">
+        <h2 data-i18n="connections">连接状态</h2>
+        <div class="connection-row"><span data-i18n="localBridge">本地桥接</span><span class="status-tag" data-component="local_bridge" data-status="waiting">等待</span></div>
+        <div class="connection-row"><span data-i18n="realtimeSession">实时会话</span><span class="status-tag" data-component="realtime_session" data-status="waiting">等待</span></div>
+        <div class="connection-row"><span data-i18n="speechRecognition">语音识别</span><span class="status-tag" data-component="asr" data-status="waiting">等待</span></div>
+        <div class="connection-row"><span data-i18n="patientVoice">患者语音</span><span class="status-tag" data-component="tts" data-status="waiting">等待</span></div>
+      </section>
+
+      <div class="control-stack">
+        <button class="primary-button full-width" id="startButton" type="button" data-i18n="startConversation">开始对话</button>
+        <div class="control-row">
+          <button class="secondary-button" id="stopButton" type="button" disabled data-i18n="stop">停止</button>
+          <button class="danger-button" id="resetButton" type="button" data-i18n="forceReset">强制重置</button>
+        </div>
+      </div>
+    </aside>
+
+    <section class="conversation-panel">
+      <div class="conversation-header">
+        <div><span class="eyebrow">BREAKING BAD NEWS</span><h1 data-i18n="scenarioTitle">坏消息告知模拟</h1></div>
+        <div class="voice-state" id="voiceState"><span class="pulse-ring"></span><span id="voiceStateText" data-i18n="notStarted">尚未开始</span></div>
+      </div>
+      <div class="transcript" id="transcript" aria-live="polite">
+        <div class="empty-state" id="emptyState">
+          <div class="mic-symbol" aria-hidden="true"></div>
+          <h2 data-i18n="emptyTitle">准备进行实时语音对话</h2>
+          <p data-i18n="emptyBody">开始后直接与虚拟患者说话。系统会自动转写、回复并在后台完成评分。</p>
+        </div>
+      </div>
+      <div class="live-strip">
+        <div class="level-meter" id="levelMeter" data-i18n-aria="micOff"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+        <span id="liveCaption" data-i18n="micOff">麦克风未启用</span>
+      </div>
+    </section>
+
+    <aside class="monitor-panel">
+      <section class="metric-section state-section">
+        <div class="section-heading"><h2 data-i18n="interactionState">互动状态</h2><span class="condition-badge" id="conditionBadge">自适应</span></div>
+        <div class="level-display">
+          <div><span>LEVEL</span><strong id="levelValue">3</strong></div>
+          <div><strong id="styleName">Concerned / Downcast</strong><span id="styleDescription">担忧 / 低落</span></div>
+        </div>
+        <div class="state-scale"><span>-1</span><div class="scale-track"><i id="stateMarker"></i></div><span>+1</span></div>
+        <div class="state-value">S(t) = <strong id="stateValue">-0.250</strong></div>
+        <p class="mode-explanation" id="modeExplanation">CPAS评分会更新RSTM并改变患者互动状态。</p>
+      </section>
+
+      <section class="metric-section score-section">
+        <div class="section-heading"><h2 data-i18n="cpasScore">CPAS评分</h2><span class="status-tag" id="gradeStatus" data-grade-status="none">尚无评分</span></div>
+        <div class="score-display"><strong id="scoreValue">--</strong><span data-i18n="scoreRange">范围 -8 至 +5</span></div>
+        <div class="track-summary">
+          <div><span data-i18n="clinicalProcess">流程完成度</span><strong id="trackAScore" class="score-value unavailable">--</strong></div>
+          <div><span data-i18n="empathyInteraction">共情与互动质量</span><strong id="trackBScore" class="score-value unavailable">--</strong></div>
+        </div>
+        <p class="grade-message" id="gradeMessage" hidden></p>
+        <div class="score-history-heading"><h3 data-i18n="scoreHistory">评分历史</h3></div>
+        <div class="score-history">
+          <table>
+            <thead><tr><th data-i18n="turn">轮次</th><th data-i18n="processShort">流程</th><th data-i18n="empathyShort">共情互动</th><th data-i18n="total">总分</th></tr></thead>
+            <tbody id="scoreHistoryBody"></tbody>
+          </table>
+          <p id="scoreHistoryEmpty" data-i18n="noGradeHistory">完成医生发言后显示逐轮评分。</p>
+        </div>
+      </section>
+
+      <section class="metric-section trajectory-section">
+        <div class="section-heading"><h2 data-i18n="rstmTrajectory">RSTM轨迹</h2><span id="turnCount">0轮</span></div>
+        <canvas id="trajectory" width="520" height="220" aria-label="RSTM状态轨迹"></canvas>
+      </section>
+
+      <section class="metric-section audit-section">
+        <div class="section-heading"><h2 data-i18n="sessionLog">会话记录</h2><span id="audioStatus" data-i18n="audioPending">音频待保存</span></div>
+        <div class="audit-log" id="auditLog"><p data-i18n="logWaiting">等待会话开始。</p></div>
+      </section>
+    </aside>
+  </main>
+
+  <dialog class="profile-dialog" id="patientProfileDialog">
+    <div class="profile-dialog-shell">
+      <header>
+        <div><h2 data-i18n="profileTitle">模拟患者完整设定</h2><p data-i18n="profileSource">研究者信息 · 来源：冻结患者设定文件</p></div>
+        <button class="icon-button" id="closePatientProfileButton" type="button" data-i18n-aria="close">×</button>
+      </header>
+      <pre id="patientProfileText" data-i18n="profileLoading">正在读取患者设定…</pre>
+    </div>
+  </dialog>
+
+  <div class="toast" id="toast" role="alert"></div>
+  <script src="/ui-model.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
