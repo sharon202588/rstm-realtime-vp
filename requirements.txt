@@ -1,0 +1,23 @@
+# RSTM-SP 项目依赖包
+# Python 3.8+
+
+# HTTP请求库（用于REST API）
+requests>=2.31.0
+
+# WebSocket客户端库（用于实时语音API）
+websockets==12.0
+
+# 麦克风采集（实时音频示例脚本）
+sounddevice>=0.4.9
+
+# 环境变量管理（可选，推荐使用）
+python-dotenv>=1.0.0
+
+# 类型检查（开发时使用，可选）
+# mypy>=1.5.0
+# types-requests>=2.31.0
+
+# 测试框架（开发时使用，可选）
+pytest>=7.4.0
+# pytest-asyncio>=0.21.0
+

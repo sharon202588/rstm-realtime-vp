@@ -1,0 +1,8 @@
+# 豆包API客户端依赖包
+
+# HTTP请求库（用于REST API）
+requests>=2.31.0
+
+# WebSocket客户端库（用于实时语音API）
+websockets>=12.0
+
