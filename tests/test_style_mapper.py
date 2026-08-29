@@ -68,3 +68,16 @@ def test_style_prompt_contains_selected_style():
     assert "Mildly Positive / Encouraging" in prompt
     assert "Level 5" in prompt
     assert "Warm" in prompt
+
+
+def test_opening_only_style_prompt_limits_level_three_to_opening():
+    zh_prompt = StyleMapper.get_opening_only_style_prompt(-0.25, "zh")
+    en_prompt = StyleMapper.get_opening_only_style_prompt(-0.25, "en")
+
+    assert "Level 3" in zh_prompt
+    assert "仅用于开场" in zh_prompt
+    assert "后续" in zh_prompt
+    assert "自然回应" in zh_prompt
+    assert "Level 3" in en_prompt
+    assert "opening only" in en_prompt.lower()
+    assert "respond naturally" in en_prompt.lower()

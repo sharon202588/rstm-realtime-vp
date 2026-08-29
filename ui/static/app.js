@@ -6,6 +6,8 @@ const state = {
   condition: "adaptive",
   language: "zh",
   running: false,
+  sessionLimitReached: false,
+  retainAudio: false,
   uploadEnabled: false,
   stream: null,
   captureContext: null,
@@ -21,12 +23,29 @@ const state = {
   connectionStatus: {},
   auditStarted: false,
   profileLoaded: false,
+  patientTemplates: [],
+  selectedPatientTemplateId: "default-bbn-zhang",
+  activePatientTemplateId: "default-bbn-zhang",
+  activePatientProfile: null,
+  editingPatientTemplateId: null,
   currentStyle: { level: 3, name: "Concerned / Downcast", description: "" },
   toastTimer: null,
 };
 
 const $ = (id) => document.getElementById(id);
 const t = (key, values) => UI.t(state.language, key, values);
+const PATIENT_TEMPLATE_STORAGE_KEY = "rstm.patientTemplates.v1";
+const ADD_PATIENT_PROFILE_OPTION = "__add_patient_profile__";
+const DEFAULT_PATIENT_TEMPLATE_DRAFT = {
+  name: "肺部检查异常复诊（张老师）副本",
+  identity_background: "张老师，58岁，男性，高中教师。已婚，与妻子和12岁女儿共同生活，并照顾住在附近的82岁母亲。",
+  clinical_facts: "例行体检发现肺部阴影，CT提示右上肺Ⅱ期癌变可能，等待活检确认与治疗计划。",
+  family_social_context: "普通工薪家庭，生活尚可但无积蓄；重视家庭责任，不愿让家人担心。",
+  knowledge_concerns: "知道检查结果异常，担心是否为恶性疾病以及自己能否继续承担家庭责任。",
+  disclosure_boundaries: "不主动确认尚未由医生说明的诊断；未被询问时不主动展开家庭经济压力。",
+  opening_presentation: "神情克制但紧张，等待医生先说明检查情况。",
+  response_boundaries: "医生解释清楚并表达共情时逐步开放；表达含糊或生硬时会追问并更加担忧。",
+};
 
 const STATUS_KEYS = {
   waiting: "waiting",
@@ -58,11 +77,12 @@ function gradeLabel(status) {
 }
 
 function createSessionIds() {
-  const now = new Date();
-  const pad = (value) => String(value).padStart(2, "0");
-  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-  $("participantId").textContent = `TEST-${stamp.slice(4, 8)}`;
-  $("sessionId").textContent = `VOICE-${stamp}`;
+  const suffix = globalThis.crypto?.randomUUID
+    ? globalThis.crypto.randomUUID().replace(/-/g, "").slice(0, 6)
+    : Math.random().toString(36).slice(2, 8).padEnd(6, "0");
+  const identifiers = RSTMUI.sessionIdentifiers(new Date(), suffix);
+  $("participantId").textContent = identifiers.participantId;
+  $("sessionId").textContent = identifiers.sessionId;
 }
 
 function applyLanguage() {
@@ -74,12 +94,16 @@ function applyLanguage() {
   document.querySelectorAll("[data-i18n-aria]").forEach((element) => {
     element.setAttribute("aria-label", t(element.dataset.i18nAria));
   });
+  document.querySelectorAll("[data-i18n-placeholder]").forEach((element) => {
+    element.setAttribute("placeholder", t(element.dataset.i18nPlaceholder));
+  });
   document.querySelectorAll("[data-component]").forEach((badge) => {
     const status = badge.dataset.status || "waiting";
     badge.textContent = statusLabel(status);
   });
   refreshTurnLabels();
   renderMode();
+  renderPatientTemplateOptions();
   renderGradeHistory();
   renderTurnCount();
   $("styleDescription").textContent = UI.styleDescription(state.language, state.currentStyle);
@@ -192,8 +216,11 @@ function setSetupLocked(locked) {
   document.querySelectorAll("[data-condition], [data-language]").forEach((button) => {
     button.disabled = locked;
   });
-  $("newSessionButton").disabled = locked;
+  $("patientTemplateSelect").disabled = locked;
+  $("retainAudioSwitch").disabled = locked;
   $("researcherProfileButton").disabled = locked;
+  $("confirmPatientTemplateButton").disabled = locked;
+  if (!locked) updatePatientTemplateActions();
 }
 
 function beginCapture() {
@@ -227,7 +254,7 @@ async function stopCapture() {
   $("voiceState").className = "voice-state";
   $("voiceStateText").textContent = t("statusStopped");
   $("liveCaption").textContent = t("micOff");
-  $("startButton").disabled = false;
+  $("startButton").disabled = state.sessionLimitReached;
   $("stopButton").disabled = true;
 }
 
@@ -319,10 +346,271 @@ function updateState(value, style, turn) {
 
 function renderMode() {
   const adaptive = state.condition === "adaptive";
+  $("interactionStateHeading").textContent = t(
+    adaptive ? "interactionState" : "initialInteractionState",
+  );
   $("conditionBadge").textContent = t(adaptive ? "modeAdaptiveShort" : "modeFixedShort");
   $("modeExplanation").textContent = t(adaptive ? "modeAdaptiveNote" : "modeFixedNote");
+  $("scoreSection").classList.toggle("not-used", !adaptive);
+  renderGradeHistory();
+  const empty = $("emptyState");
+  if (empty?.querySelector("h2")?.dataset.i18n === "emptyTitle") renderEmptyState(false);
 }
 
+async function persistPatientTemplates() {
+  localStorage.setItem(PATIENT_TEMPLATE_STORAGE_KEY, JSON.stringify(state.patientTemplates));
+  try {
+    const response = await fetch("/api/patient-templates", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ templates: state.patientTemplates }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    state.patientTemplates = RSTMUI.loadPatientTemplates(payload.templates);
+    localStorage.setItem(PATIENT_TEMPLATE_STORAGE_KEY, JSON.stringify(state.patientTemplates));
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function loadPersistedPatientTemplates() {
+  const localTemplates = RSTMUI.loadPatientTemplates(
+    localStorage.getItem(PATIENT_TEMPLATE_STORAGE_KEY),
+  );
+  try {
+    const response = await fetch("/api/patient-templates");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    const folderTemplates = RSTMUI.loadPatientTemplates(payload.templates);
+    state.patientTemplates = folderTemplates.length ? folderTemplates : localTemplates;
+    if (!folderTemplates.length && localTemplates.length) {
+      await persistPatientTemplates();
+    } else {
+      localStorage.setItem(PATIENT_TEMPLATE_STORAGE_KEY, JSON.stringify(state.patientTemplates));
+    }
+  } catch (_) {
+    state.patientTemplates = localTemplates;
+  }
+}
+
+function patientTemplateById(id) {
+  return state.patientTemplates.find((item) => item.id === id) || null;
+}
+
+function selectedPatientTemplate() {
+  return patientTemplateById(state.selectedPatientTemplateId);
+}
+
+function activePatientTemplate() {
+  return patientTemplateById(state.activePatientTemplateId);
+}
+
+function updatePatientTemplateActions() {
+  const selected = selectedPatientTemplate();
+  const deleteButton = $("deleteSelectedPatientTemplateButton");
+  if (deleteButton) deleteButton.disabled = !selected;
+  const savedDraftChanged = selected
+    && selected.id === state.activePatientTemplateId
+    && state.activePatientProfile
+    && JSON.stringify(RSTMUI.patientProfilePayload(selected)) !== JSON.stringify(state.activePatientProfile);
+  const hasChange = state.selectedPatientTemplateId !== ADD_PATIENT_PROFILE_OPTION
+    && (state.selectedPatientTemplateId !== state.activePatientTemplateId || savedDraftChanged);
+  $("confirmPatientTemplateButton").disabled = state.running || !hasChange;
+  const dialogButton = $("activatePatientTemplateButton");
+  if (dialogButton) {
+    const editingDraft = !$("patientTemplateForm").hidden;
+    dialogButton.disabled = state.running
+      || (!editingDraft && state.selectedPatientTemplateId === state.activePatientTemplateId);
+  }
+}
+
+function renderPatientTemplateOptions() {
+  const select = $("patientTemplateSelect");
+  if (!select) return;
+  if (state.activePatientTemplateId !== "default-bbn-zhang" && !activePatientTemplate()) {
+    state.activePatientTemplateId = "default-bbn-zhang";
+  }
+  if (state.selectedPatientTemplateId !== "default-bbn-zhang" && !selectedPatientTemplate()) {
+    state.selectedPatientTemplateId = state.activePatientTemplateId;
+  }
+  select.replaceChildren();
+  const defaultOption = document.createElement("option");
+  defaultOption.value = "default-bbn-zhang";
+  defaultOption.textContent = `${t("defaultPatientTemplate")}${state.activePatientTemplateId === "default-bbn-zhang" ? t("activePatientSuffix") : ""}`;
+  select.append(defaultOption);
+  state.patientTemplates.forEach((template) => {
+    const option = document.createElement("option");
+    option.value = template.id;
+    option.textContent = `${template.name}${template.id === state.activePatientTemplateId ? t("activePatientSuffix") : ""}`;
+    select.append(option);
+  });
+  const addOption = document.createElement("option");
+  addOption.value = ADD_PATIENT_PROFILE_OPTION;
+  addOption.textContent = t("addPatientTemplate");
+  select.append(addOption);
+  select.value = state.selectedPatientTemplateId;
+  const active = activePatientTemplate();
+  $("patientPresenceName").textContent = active?.name || t("defaultPatientTemplate");
+  updatePatientTemplateActions();
+}
+
+async function loadDefaultPatientProfile() {
+  const profileText = $("patientProfileText");
+  if (state.profileLoaded) return;
+  profileText.dataset.i18n = "profileLoading";
+  profileText.textContent = t("profileLoading");
+  try {
+    const response = await fetch("/api/patient-profile");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    profileText.removeAttribute("data-i18n");
+    profileText.textContent = String(payload.profile || "");
+    state.profileLoaded = true;
+  } catch (_) {
+    profileText.dataset.i18n = "profileLoadError";
+    profileText.textContent = t("profileLoadError");
+  }
+}
+
+function showPatientTemplateEditor(template = null) {
+  $("defaultProfileView").hidden = true;
+  const form = $("patientTemplateForm");
+  form.hidden = false;
+  form.reset();
+  state.editingPatientTemplateId = template?.id || null;
+  $("patientTemplateName").value = template?.name || "";
+  UI.PATIENT_PROFILE_FIELDS.forEach((field) => {
+    const input = form.querySelector(`[data-profile-field="${field}"]`);
+    input.value = template?.[field] || "";
+  });
+  $("cloneDefaultProfileButton").hidden = true;
+  $("savePatientTemplateButton").hidden = false;
+  $("activatePatientTemplateButton").hidden = false;
+  $("deletePatientTemplateButton").hidden = !template?.id;
+  updatePatientTemplateActions();
+}
+
+function showDefaultPatientProfile() {
+  state.editingPatientTemplateId = null;
+  $("defaultProfileView").hidden = false;
+  $("patientTemplateForm").hidden = true;
+  $("cloneDefaultProfileButton").hidden = false;
+  $("savePatientTemplateButton").hidden = true;
+  $("deletePatientTemplateButton").hidden = true;
+  $("activatePatientTemplateButton").hidden = false;
+  updatePatientTemplateActions();
+  loadDefaultPatientProfile();
+}
+
+function renderPatientProfileDialog() {
+  const template = selectedPatientTemplate();
+  if (template) showPatientTemplateEditor(template);
+  else showDefaultPatientProfile();
+}
+
+function openPatientProfile() {
+  if (state.running) return;
+  $("patientProfileDialog").showModal();
+  renderPatientProfileDialog();
+}
+
+function createPatientTemplate() {
+  showPatientTemplateEditor();
+  $("patientTemplateName").focus();
+}
+
+function cloneDefaultPatientProfile() {
+  showPatientTemplateEditor(DEFAULT_PATIENT_TEMPLATE_DRAFT);
+  $("patientTemplateName").select();
+}
+
+async function savePatientTemplate() {
+  const form = $("patientTemplateForm");
+  const template = {
+    id: state.editingPatientTemplateId || `custom-${Date.now()}`,
+    name: $("patientTemplateName").value,
+  };
+  UI.PATIENT_PROFILE_FIELDS.forEach((field) => {
+    template[field] = form.querySelector(`[data-profile-field="${field}"]`).value;
+  });
+  try {
+    state.patientTemplates = RSTMUI.upsertPatientTemplate(state.patientTemplates, template);
+    const saved = state.patientTemplates[0];
+    state.selectedPatientTemplateId = saved.id;
+    state.editingPatientTemplateId = saved.id;
+    const savedToFolder = await persistPatientTemplates();
+    renderPatientTemplateOptions();
+    showPatientTemplateEditor(saved);
+    showToast(t(savedToFolder ? "templateSaved" : "templateFolderSaveFailed"), !savedToFolder);
+    return saved;
+  } catch (_) {
+    showToast(t("templateInvalid"), true);
+    form.querySelector('[data-profile-field="clinical_facts"]').focus();
+    return null;
+  }
+}
+async function deletePatientTemplate() {
+  const template = selectedPatientTemplate();
+  if (!template) return;
+  const deletingActive = template.id === state.activePatientTemplateId;
+  const confirmation = deletingActive
+    ? t("confirmDeleteActiveTemplate")
+    : t("confirmDeleteTemplate");
+  if (!window.confirm(confirmation)) return;
+  const result = RSTMUI.patientTemplateDeletion(
+    state.patientTemplates,
+    template.id,
+    state.activePatientTemplateId,
+  );
+  state.patientTemplates = result.templates;
+  state.activePatientTemplateId = result.activeId;
+  state.selectedPatientTemplateId = result.selectedId;
+  if (result.deletedActive) state.activePatientProfile = null;
+  const savedToFolder = await persistPatientTemplates();
+  renderPatientTemplateOptions();
+  if ($("patientProfileDialog").open) $("patientProfileDialog").close();
+  if (result.deletedActive) {
+    await newParticipantSession({ skipConfirm: true });
+  }
+  showToast(t(savedToFolder ? "templateDeleted" : "templateFolderSaveFailed"), !savedToFolder);
+}
+async function usePatientTemplateAndCreateSession() {
+  if (state.running && !window.confirm(t("confirmNewSession"))) return;
+  let selectedId = state.selectedPatientTemplateId;
+  if (!$("patientTemplateForm").hidden && $("patientProfileDialog").open) {
+    const saved = await savePatientTemplate();
+    if (!saved) return;
+    selectedId = saved.id;
+  }
+  if (selectedId === ADD_PATIENT_PROFILE_OPTION) return;
+  state.activePatientTemplateId = selectedId;
+  state.selectedPatientTemplateId = selectedId;
+  const selected = patientTemplateById(selectedId);
+  state.activePatientProfile = selected
+    ? RSTMUI.patientProfilePayload(selected)
+    : null;
+  renderPatientTemplateOptions();
+  if ($("patientProfileDialog").open) $("patientProfileDialog").close();
+  await newParticipantSession({ skipConfirm: true });
+}
+
+function buildConfigureCommand() {
+  const command = {
+    command: "configure",
+    participant_id: $("participantId").textContent,
+    session_id: $("sessionId").textContent,
+    condition: state.condition,
+    language: state.language,
+    scenario: "breaking_bad_news",
+    retain_audio: state.retainAudio,
+  };
+  if (state.activePatientProfile) {
+    command.patient_profile = { ...state.activePatientProfile };
+  }
+  return command;
+}
 function formatScore(value, pending = false) {
   if (pending) return "…";
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return "--";
@@ -342,6 +630,22 @@ function isProcessViolation(item) {
 function renderGradeHistory() {
   const body = $("scoreHistoryBody");
   body.replaceChildren();
+  const cpasEnabled = state.condition === "adaptive";
+  $("scoreSection").classList.toggle("not-used", !cpasEnabled);
+  if (!cpasEnabled) {
+    $("scoreHistoryEmpty").hidden = true;
+    $("scoreValue").textContent = "--";
+    setScoreValue($("trackAScore"), null);
+    setScoreValue($("trackBScore"), null);
+    $("gradeStatus").textContent = t("cpasNotUsedStatus");
+    $("gradeStatus").className = "status-tag";
+    $("gradeStatus").dataset.gradeStatus = "not-used";
+    $("gradeMessage").className = "grade-message unscorable-message";
+    $("gradeMessage").textContent = t("cpasNotUsed");
+    $("gradeMessage").hidden = false;
+    return;
+  }
+  $("scoreHistoryEmpty").textContent = t("noGradeHistory");
   state.gradeHistory.forEach((item) => {
     const pending = item.status === "pending";
     const row = document.createElement("tr");
@@ -385,13 +689,21 @@ function renderGradeHistory() {
   $("gradeStatus").className = `status-tag ${latest.status}`;
   $("gradeStatus").dataset.gradeStatus = latest.status;
 
-  const message = latest.status === "unscorable" || latest.status === "error"
-    ? latest.reason
-    : isProcessViolation(latest)
-      ? t("processPrerequisiteMissing")
-      : "";
+  const message = latest.status === "unscorable"
+    ? t("gradeUnscorableReason")
+    : latest.status === "error"
+      ? latest.reason
+      : isProcessViolation(latest)
+        ? t("processPrerequisiteMissing")
+        : "";
+  $("gradeMessage").className = `grade-message${latest.status === "unscorable" ? " unscorable-message" : ""}`;
   $("gradeMessage").textContent = message;
   $("gradeMessage").hidden = !message;
+}
+
+function trajectoryTickLabel(value) {
+  if (value > 0) return `+${value}`;
+  return String(value);
 }
 
 function drawTrajectory() {
@@ -399,33 +711,69 @@ function drawTrajectory() {
   const ctx = canvas.getContext("2d");
   const width = canvas.width;
   const height = canvas.height;
-  const pad = 24;
+  const plot = { left: 48, right: 14, top: 34, bottom: 24 };
+  const plotWidth = width - plot.left - plot.right;
+  const plotHeight = height - plot.top - plot.bottom;
+  const trajectoryGridValues = [-1, -0.7, -0.4, -0.1, 0, 0.1, 0.4, 0.7, 1];
+  const trajectoryLabelValues = [-1, 0, 1];
+  const yFor = (value) => plot.top + (1 - (value + 1) / 2) * plotHeight;
+
   ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = "#f8faf8";
   ctx.fillRect(0, 0, width, height);
-  ctx.strokeStyle = "#dce2de";
-  ctx.lineWidth = 1;
-  [-1, -0.4, -0.1, 0.1, 0.4, 0.7, 1].forEach((value) => {
-    const y = pad + (1 - (value + 1) / 2) * (height - pad * 2);
-    ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(width - pad, y); ctx.stroke();
+
+  trajectoryGridValues.forEach((value) => {
+    const y = yFor(value);
+    ctx.strokeStyle = value === 0 ? "#9da9a2" : "#e1e7e3";
+    ctx.lineWidth = value === 0 ? 2 : 1;
+    ctx.beginPath();
+    ctx.moveTo(plot.left, y);
+    ctx.lineTo(width - plot.right, y);
+    ctx.stroke();
   });
-  const points = state.trajectory;
+
+  ctx.strokeStyle = "#b3bdb7";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(plot.left, plot.top);
+  ctx.lineTo(plot.left, height - plot.bottom);
+  ctx.stroke();
+
+  ctx.fillStyle = "#68736d";
+  ctx.font = '20px "Segoe UI", "Microsoft YaHei", Arial, sans-serif';
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  trajectoryLabelValues.forEach((value) => {
+    ctx.fillText(trajectoryTickLabel(value), plot.left - 9, yFor(value));
+  });
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.fillText("S(t)", 6, 3);
+
+  const points = state.trajectory.map((value) => Math.max(-1, Math.min(1, Number(value))));
   ctx.strokeStyle = "#176b4d";
   ctx.lineWidth = 4;
   ctx.lineJoin = "round";
+  ctx.lineCap = "round";
   ctx.beginPath();
   points.forEach((value, index) => {
-    const x = points.length === 1 ? pad : pad + index * (width - pad * 2) / (points.length - 1);
-    const y = pad + (1 - (value + 1) / 2) * (height - pad * 2);
+    const x = points.length === 1
+      ? plot.left
+      : plot.left + index * plotWidth / (points.length - 1);
+    const y = yFor(value);
     if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
   });
-  if (points.length === 1) ctx.lineTo(pad + 1, pad + (1 - (points[0] + 1) / 2) * (height - pad * 2));
+  if (points.length === 1) ctx.lineTo(plot.left + 1, yFor(points[0]));
   ctx.stroke();
+
   ctx.fillStyle = "#176b4d";
   points.forEach((value, index) => {
-    const x = points.length === 1 ? pad : pad + index * (width - pad * 2) / (points.length - 1);
-    const y = pad + (1 - (value + 1) / 2) * (height - pad * 2);
-    ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fill();
+    const x = points.length === 1
+      ? plot.left
+      : plot.left + index * plotWidth / (points.length - 1);
+    ctx.beginPath();
+    ctx.arc(x, yFor(value), 5, 0, Math.PI * 2);
+    ctx.fill();
   });
 }
 
@@ -441,7 +789,7 @@ function renderEmptyState(reset = false) {
   const title = document.createElement("h2");
   title.dataset.i18n = reset ? "resetTitle" : "emptyTitle";
   const body = document.createElement("p");
-  body.dataset.i18n = reset ? "resetBody" : "emptyBody";
+  body.dataset.i18n = reset ? "resetBody" : state.condition === "adaptive" ? "emptyBodyAdaptive" : "emptyBodyControl";
   empty.append(mic, title, body);
   transcript.append(empty);
   title.textContent = t(title.dataset.i18n);
@@ -460,13 +808,22 @@ function handleEvent(event) {
     }
   } else if (event.type === "session") {
     if (event.status === "started") {
+      state.sessionLimitReached = false;
       beginCapture();
       updateState(event.state, event.style, 0);
       addAudit(t("conversationStarted"));
     } else if (event.status === "configured") {
       state.condition = event.adaptive_enabled ? "adaptive" : "control";
+      state.sessionLimitReached = false;
+      state.gradeHistory = [];
       updateState(event.state, event.style, 0);
       renderMode();
+    } else if (event.status === "limit_reached") {
+      state.sessionLimitReached = true;
+      state.uploadEnabled = false;
+      stopCapture();
+      addAudit(t("turnLimitReached"));
+      showToast(t("turnLimitReached"));
     } else if (event.status === "stopped") {
       stopCapture();
       addAudit(t("conversationStopped"));
@@ -476,7 +833,7 @@ function handleEvent(event) {
     }
   } else if (event.type === "transcript") {
     appendTurn(event.turn);
-  } else if (event.type === "grade") {
+  } else if (event.type === "grade" && state.condition === "adaptive") {
     state.gradeHistory = RSTMUI.upsertGrade(state.gradeHistory, event);
     renderGradeHistory();
     addAudit(t("cpasAudit", { turn: event.doctor_turn_id || "", status: gradeLabel(event.grading_status) }));
@@ -504,19 +861,12 @@ function handleSocketMessage(message) {
 
 async function startTest() {
   try {
+    const configureCommand = buildConfigureCommand();
     $("startButton").disabled = true;
     $("voiceStateText").textContent = t("requestingMic");
     await connectSocket();
     await prepareCapture();
-    sendCommand({
-      command: "configure",
-      participant_id: $("participantId").textContent,
-      session_id: $("sessionId").textContent,
-      condition: state.condition,
-      language: state.language,
-      scenario: "breaking_bad_news",
-      retain_audio: true,
-    });
+    sendCommand(configureCommand);
     sendCommand({ command: "start" });
     $("voiceStateText").textContent = t("connectingPatient");
     setConnection("realtime_session", "connecting");
@@ -537,7 +887,9 @@ function resetAudit() {
   $("auditLog").innerHTML = `<p data-i18n="logWaiting">${t("logWaiting")}</p>`;
 }
 
-async function resetTest() {
+async function newParticipantSession({ skipConfirm = false } = {}) {
+  if (!skipConfirm && !window.confirm(t("confirmNewSession"))) return false;
+  state.sessionLimitReached = false;
   await stopCapture();
   stopPlayback();
   try { sendCommand({ command: "reset" }); } catch (_) {}
@@ -548,29 +900,10 @@ async function resetTest() {
   renderGradeHistory();
   renderEmptyState(true);
   resetAudit();
-  $("audioStatus").textContent = t("audioPending");
+  $("audioStatus").textContent = t(state.retainAudio ? "audioPending" : "audioNotRetained");
   createSessionIds();
-}
-
-async function openPatientProfile() {
-  if (state.running) return;
-  const dialog = $("patientProfileDialog");
-  const profileText = $("patientProfileText");
-  dialog.showModal();
-  if (state.profileLoaded) return;
-  profileText.dataset.i18n = "profileLoading";
-  profileText.textContent = t("profileLoading");
-  try {
-    const response = await fetch("/api/patient-profile");
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const payload = await response.json();
-    profileText.removeAttribute("data-i18n");
-    profileText.textContent = String(payload.profile || "");
-    state.profileLoaded = true;
-  } catch (_) {
-    profileText.dataset.i18n = "profileLoadError";
-    profileText.textContent = t("profileLoadError");
-  }
+  showToast(t("newSessionCreated"));
+  return true;
 }
 
 document.querySelectorAll("[data-condition]").forEach((button) => {
@@ -578,6 +911,7 @@ document.querySelectorAll("[data-condition]").forEach((button) => {
     document.querySelectorAll("[data-condition]").forEach((item) => item.classList.remove("active"));
     button.classList.add("active");
     state.condition = button.dataset.condition;
+    state.gradeHistory = [];
     renderMode();
   });
 });
@@ -591,17 +925,47 @@ document.querySelectorAll("[data-language]").forEach((button) => {
   });
 });
 
-$("newSessionButton").addEventListener("click", createSessionIds);
 $("startButton").addEventListener("click", startTest);
 $("stopButton").addEventListener("click", stopTest);
-$("resetButton").addEventListener("click", resetTest);
+$("newParticipantSessionButton").addEventListener("click", newParticipantSession);
+$("retainAudioSwitch").addEventListener("click", () => {
+  if (state.running) return;
+  state.retainAudio = !state.retainAudio;
+  $("retainAudioSwitch").classList.toggle("checked", state.retainAudio);
+  $("retainAudioSwitch").setAttribute("aria-checked", String(state.retainAudio));
+  $("audioStatus").textContent = t(state.retainAudio ? "audioPending" : "audioNotRetained");
+});
 $("researcherProfileButton").addEventListener("click", openPatientProfile);
+$("createPatientTemplateButton").addEventListener("click", createPatientTemplate);
+$("cloneDefaultProfileButton").addEventListener("click", cloneDefaultPatientProfile);
+$("savePatientTemplateButton").addEventListener("click", savePatientTemplate);
+$("deletePatientTemplateButton").addEventListener("click", deletePatientTemplate);
+$("deleteSelectedPatientTemplateButton").addEventListener("click", deletePatientTemplate);
+$("activatePatientTemplateButton").addEventListener("click", usePatientTemplateAndCreateSession);
+$("confirmPatientTemplateButton").addEventListener("click", usePatientTemplateAndCreateSession);
+$("patientTemplateSelect").addEventListener("change", (event) => {
+  if (event.target.value === ADD_PATIENT_PROFILE_OPTION) {
+    state.selectedPatientTemplateId = state.activePatientTemplateId;
+    renderPatientTemplateOptions();
+    $("patientProfileDialog").showModal();
+    createPatientTemplate();
+    return;
+  }
+  state.selectedPatientTemplateId = event.target.value;
+  renderPatientTemplateOptions();
+  if ($("patientProfileDialog").open) renderPatientProfileDialog();
+});
 $("closePatientProfileButton").addEventListener("click", () => $("patientProfileDialog").close());
 $("patientProfileDialog").addEventListener("click", (event) => {
   if (event.target === $("patientProfileDialog")) $("patientProfileDialog").close();
 });
 
-createSessionIds();
-applyLanguage();
-drawTrajectory();
-connectSocket().catch(() => showToast(t("serviceUnavailable"), true));
+async function initializeInterface() {
+  await loadPersistedPatientTemplates();
+  createSessionIds();
+  applyLanguage();
+  drawTrajectory();
+  connectSocket().catch(() => showToast(t("serviceUnavailable"), true));
+}
+
+initializeInterface();

@@ -176,7 +176,7 @@ RSTM-SP/
 
 ### 重要说明
 - **状态：冻结 (FROZEN)**
-- **版本：1.0.0**
+- **版本：1.2**
 - **修改限制**：此文件不得修改，内容必须原样注入系统上下文
 - **原因**：任何对患者身份、背景或性格的修改都会影响培训场景的一致性和实验可比性
 
@@ -207,7 +207,7 @@ RSTM-SP/
 
 ### 重要说明
 - **状态：冻结 (FROZEN)**
-- **版本：1.0.0**
+- **版本：1.2**
 - **修改限制**：此文件不得修改，映射规则必须在运行时保持不变
 - **原因**：任何对映射规则的修改都会影响实验的可比性和一致性
 
@@ -240,15 +240,15 @@ RSTM-SP/
 
 ### 重要说明
 - **状态：冻结 (FROZEN)**
-- **版本：1.0.0**
-- **修改限制**：此文件不得修改，仅允许变量替换（如 `{{PRECEDING_DIALOGUE_HISTORY}}`）
+- **版本：1.2**
+- **修改限制**：此文件不得修改，仅允许替换 `{{TARGET_DOCTOR_TURN_ID}}`、`{{TARGET_DOCTOR_UTTERANCE}}` 和 `{{PRECEDING_DIALOGUE_HISTORY}}`
 - **原因**：任何对逻辑、评分规则或输出格式的修改都会影响实验的可比性
 
 ### 评分流程
 
 1. **阶段识别 (Step 0)**
    - 分析医生的最后一条回复
-   - 识别其属于 SPIKES 的哪个阶段（S/P/I/K/E/S）
+   - 识别为 `SETTING`、`PERCEPTION`、`INVITATION`、`KNOWLEDGE`、`EMPATHY` 或 `STRATEGY_SUMMARY`
 
 2. **安全门检查 (Step 1)**
    - 如果识别为 K 阶段，检查是否先完成了 P 和 I
@@ -267,11 +267,13 @@ RSTM-SP/
 
 ```json
 {
-  "target_response_extraction": "医生的最后一条回复原文",
-  "inferred_phase": "S/P/I/K/E/S",
+  "doctor_turn_id": "目标医生轮次ID",
+  "grading_status": "scored",
+  "target_response_extraction": "医生的目标回复原文",
+  "inferred_stage": "SETTING|PERCEPTION|INVITATION|KNOWLEDGE|EMPATHY|STRATEGY_SUMMARY",
   "safety_check": {
-    "status": "Safe / PIK_Violation",
-    "missing_elements": "None / P / I / Both (如果适用)"
+    "status": "Safe|PIK_Violation",
+    "missing_elements": "None|P|I|Both"
   },
   "scoring_breakdown": {
     "track_a_task": <整数>,
@@ -279,7 +281,7 @@ RSTM-SP/
     "formula": "Track A + Track B"
   },
   "final_cpas_score": <整数>,
-  "reasoning": "简要说明阶段识别理由。如果违规，解释缺失的 P/I。如果安全，说明任务和共情的质量。"
+  "reasoning": "简要说明阶段、安全门、Track A和Track B的文字证据。"
 }
 ```
 
@@ -295,11 +297,21 @@ RSTM-SP/
 
 启动后打开 `http://127.0.0.1:7860`，在浏览器中允许麦克风权限，然后点击“开始对话”。页面加载不会连接外部模型；只有点击开始后才会连接豆包实时语音与评分服务。当前语音断句使用 1500 ms 自定义 VAD 平滑窗口：医生连续停顿约 1.5 秒后，系统才判定本轮发言结束并让患者回答。
 
-界面自动跟随“交流语言”切换中文或英文。患者交互模式分为“自适应患者”和“固定 Level 3”：前者允许 CPAS 驱动 RSTM 状态变化，后者仅记录评分并保持患者为 Level 3。对话记录使用固定高度的内部滚动区域；CPAS 区域显示“流程完成度”和“共情与互动质量”两条评分及逐轮历史。研究者可在会话开始前通过“查看患者完整设定”读取冻结病例；会话进行中该入口会锁定，避免影响测试。
+界面自动跟随“交流语言”切换中文或英文。患者交互模式显示为“自适应交互”和“非自适应交互”：前者允许 CPAS 驱动 RSTM 状态变化；后者仅在开场采用 Level 3 `Concerned / Downcast`，随后依据固定病例与对话上下文自然回应，不进行 CPAS 评分或 RSTM 更新。对话记录使用固定高度的内部滚动区域；CPAS 区域显示“流程完成度”和“共情与互动质量”两条评分及逐轮历史。研究者可在会话开始前通过“查看与管理患者设定”读取冻结的默认病例，或创建、修改和删除保存在应用文件夹 `data/patient_templates.json` 中的自定义患者模板；会话进行中该入口会锁定，避免影响测试。自定义模板仅要求填写“临床事实”，其他模块可空；模板名称留空时会从临床事实的第一段短句在本地生成。保存设定只保存草稿，只有点击“使用此患者并生成新会话”才会切换VP身份并生成新的研究会话。
+
+### 复制到其他 Windows 电脑
+
+双击项目根目录的 `build_portable.cmd` 会在项目同级的 `RealtimeVoiceVP/` 发布目录中生成一个新版本文件夹。当项目位于 `F:\RSTM-SP` 时，发布位置为 `F:\RealtimeVoiceVP\RealtimeVoiceVP V1.0.0`，后续构建自动递增为 `V1.0.1`、`V1.0.2`，且不会覆盖旧版本。`LATEST.txt` 记录最新版本文件夹名称，每个版本内的 `VERSION.txt` 记录其版本号。
+
+向其他电脑复制时，只复制某一个完整的 `RealtimeVoiceVP Vx.y.z/` 文件夹。目标电脑无需安装 Python，双击其中的 `start_ui.cmd` 即可启动；仍需联网访问豆包服务，并允许浏览器使用麦克风。版本文件夹中的 `.env` 含有明文 API 凭证，只能复制到受信任的电脑。
+
+也可以复制项目源码文件夹，但不要依赖原电脑生成的 `.venv`。目标电脑需安装 64 位 Python 3.10-3.14，并在首次启动时联网；双击根目录 `start_ui.cmd` 后，脚本会自动重建本地环境并安装 `requirements-runtime.txt` 中的运行依赖。
+
+自定义患者设定保存在应用文件夹的 `data/` 下，会随文件夹迁移。会话文字、研究事件及可选音频保存在本机应用文件夹中，不会自动上传到 Git。
 
 实时语音只读取新开通模型对应的 `DOUBAO_REALTIME_APP_ID` 与 `DOUBAO_REALTIME_ACCESS_KEY`。按官方实时对话文档，握手使用 `X-Api-App-ID`、`X-Api-Access-Key` 和固定资源 ID `volc.speech.dialog`；该端点不使用单独 `X-Api-Key`，`Secret Key` 也不写入项目。`DOUBAO_GRADER_MODEL` 必须填写当前账号已开通的评分模型或推理端点 ID。测试界面会在每次开始场次时重新读取 `.env`。
 
-测试界面固定使用 `breaking_bad_news` 场景。自适应组和非自适应组均从 Level 3 `Concerned / Downcast`、`S(t)=-0.25` 开始；非自适应组始终保持 Level 3。CPAS 在后台只评价最近一次医生发言，完整既往对话仅作为上下文；患者回复不会等待评分结果。
+测试界面固定使用 `breaking_bad_news` 场景。自适应组从 Level 3 `Concerned / Downcast`、`S(t)=-0.25` 开始，并可由 CPAS 驱动后续状态变化。非自适应组仅将 Level 3 用作开场表现，后续不再施加 Level 约束，不提交 CPAS 评分，也不更新 RSTM。CPAS 在后台只评价最近一次医生发言，完整既往对话仅作为上下文；患者回复不会等待评分结果。
 自适应组只有在 RSTM 跨越 Level 边界时才更新远端患者风格；同一 Level 内的数值变化不会操作语音会话。跨级更新会等待本轮 `TTSEnded`，随后在原 WebSocket 和原 `dialog_id` 上发送全量 `UpdateConfig`，并在收到 `ConfigUpdated` 后继续收音。若更新被拒绝或短时间内未确认，系统才重建物理连接，并把同一 `dialog_id` 传入新 Session 以恢复对话上下文。
 
 测试数据保存在 `logs/<session_id>/`：
@@ -308,7 +320,7 @@ RSTM-SP/
 - `audio/clinician_session.wav`：医生麦克风输入，16 kHz、单声道、PCM16。
 - `audio/patient_session.wav`：虚拟患者输出，24 kHz、单声道、PCM16。
 
-“强制重置”会停止当前连接、清空对话与未完成评分，并将下一轮测试恢复到 Level 3。每位新受试者开始前都应执行重置或生成新的测试场次。
+界面只保留一个“生成新会话”入口。它会停止当前连接并保存本轮音频，清空对话、未完成评分和RSTM轨迹，恢复初始互动状态，并生成唯一的新受试者编号和会话编号。当前选择的交流语言、交互模式与患者模板会保留，便于连续测试同一研究条件。每场研究测试的日志还会保存本轮实际使用的患者设定快照，避免后续修改自定义模板影响审计。
 
 端口可通过 `--http-port` 和 `--ws-port` 修改。若修改WebSocket端口，例如改为 `9000`，请使用 `http://127.0.0.1:7860/?wsPort=9000` 打开页面。
 ## 快速开始
@@ -539,4 +551,3 @@ track_b = result.get("scoring_breakdown", {}).get("track_b_empathy")
 ---
 
 **重要提醒**：本项目用于临床沟通培训和质量评估，评分结果仅供参考，不应作为唯一评判标准。实际临床场景复杂多样，需要结合具体情况灵活应用。
-

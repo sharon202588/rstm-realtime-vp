@@ -15,6 +15,7 @@ from core.session_logger import SessionLogger
 class FakeRESTClient:
     def __init__(self):
         self.last_messages = None
+        self.grade_calls = 0
 
     def chat_completion(self, messages, reasoning_effort=None):
         self.last_messages = messages
@@ -29,6 +30,7 @@ class FakeRESTClient:
         }
 
     def grade_dialogue(self, dialogue_history, grader_prompt, reasoning_effort=None):
+        self.grade_calls += 1
         return {
             "final_cpas_score": 2,
             "scoring_breakdown": {
@@ -126,6 +128,7 @@ def test_case_context_is_added_to_generation_prompt(tmp_path):
 
 
 def test_non_adaptive_condition_does_not_update_rstm(tmp_path):
+    fake_client = FakeRESTClient()
     manager = DialogueManager(
         ark_api_key=None,
         doubao_realtime_app_id=None,
@@ -135,18 +138,31 @@ def test_non_adaptive_condition_does_not_update_rstm(tmp_path):
         adaptive_enabled=False,
         fixed_style_state=0.0,
     )
-    manager.rest_client = FakeRESTClient()
+    manager.rest_client = fake_client
 
-    result = asyncio.run(
+    first_result = asyncio.run(
         manager.process_doctor_turn(
             doctor_message="I need to tell you about your scan results.",
             use_voice=False,
         )
     )
+    first_prompt = fake_client.last_messages[0]["content"]
 
-    assert result["phase_a"]["style_level"] == 4
-    assert result["phase_c"]["adaptive_enabled"] is False
-    assert result["phase_c"]["state"] == 0.0
+    second_result = asyncio.run(
+        manager.process_doctor_turn(
+            doctor_message="What worries you most right now?",
+            use_voice=False,
+        )
+    )
+    second_prompt = fake_client.last_messages[0]["content"]
+
+    assert first_result["phase_a"]["style_level"] == 4
+    assert first_result["phase_b"] is None
+    assert first_result["phase_c"]["adaptive_enabled"] is False
+    assert first_result["phase_c"]["state"] == 0.0
+    assert "仅用于开场" in first_prompt
+    assert "仅用于开场" not in second_prompt
+    assert fake_client.grade_calls == 0
     assert manager.state_manager.turn_count == 0
     assert manager.state_manager.get_current_state() == 0.0
 

@@ -6,6 +6,11 @@ import re
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from core.patient_profiles import (
+    PatientProfileError,
+    format_patient_profile,
+    normalize_patient_profile,
+)
 from core.realtime_voice_session import VoiceSessionConfig
 
 
@@ -54,6 +59,18 @@ def parse_command(message: Mapping[str, Any]) -> BrowserCommand:
     if scenario != "breaking_bad_news":
         raise ProtocolError("Only breaking_bad_news is available in this build.")
 
+    profile_kwargs: dict[str, str] = {}
+    if message.get("patient_profile") is not None:
+        try:
+            patient_profile = normalize_patient_profile(message["patient_profile"])
+        except PatientProfileError as exc:
+            raise ProtocolError(str(exc)) from exc
+        profile_kwargs = {
+            "patient_profile_id": patient_profile["id"],
+            "patient_profile_name": patient_profile["name"],
+            "patient_profile_text": format_patient_profile(patient_profile),
+        }
+
     config = VoiceSessionConfig(
         participant_id=participant_id,
         session_id=session_id,
@@ -64,5 +81,6 @@ def parse_command(message: Mapping[str, Any]) -> BrowserCommand:
         initial_state=-0.25,
         fixed_style_state=-0.25,
         retain_audio=bool(message.get("retain_audio", True)),
+        **profile_kwargs,
     )
     return BrowserCommand(name=name, config=config)

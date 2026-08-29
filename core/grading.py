@@ -7,9 +7,9 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 
-GRADER_VERSION = "1.1"
+GRADER_VERSION = "1.2"
 PROJECT_ROOT = Path(__file__).parent.parent
-DEFAULT_GRADER_PROMPT = PROJECT_ROOT / "specs" / "grader_prompt_v1_1.md"
+DEFAULT_GRADER_PROMPT = PROJECT_ROOT / "specs" / "grader_prompt.md"
 
 
 @dataclass(frozen=True)

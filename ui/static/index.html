@@ -5,51 +5,52 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <title>实时语音虚拟患者</title>
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="icon" href="/assets/realtime-virtual-patient-app-icon.png">
+  <link rel="stylesheet" href="/styles.css?v=20260729-15">
 </head>
 <body>
   <header class="app-header">
     <div class="brand">
-      <span class="brand-mark" aria-hidden="true">RS</span>
+      <img class="brand-mark" src="/assets/realtime-virtual-patient-app-icon.png" alt="" aria-hidden="true">
       <div>
         <strong data-i18n="brandName">实时语音虚拟患者</strong>
-        <span data-i18n="brandSubtitle">RSTM-SP · 医学沟通训练</span>
+        <span data-i18n="brandSubtitle">医学沟通训练</span>
       </div>
     </div>
-    <div class="header-status">
-      <span class="status-dot" id="bridgeDot"></span>
-      <span id="bridgeLabel" data-i18n="bridgeConnecting">正在连接本地服务</span>
+    <div class="header-tools">
+      <div class="header-identifiers">
+        <div><span data-i18n="participant">受试者</span><strong id="participantId">P-000000-000000</strong></div>
+        <div><span data-i18n="sessionId">会话编号</span><strong id="sessionId">S-000000-000000</strong></div>
+      </div>
+      <div class="header-status">
+        <span class="status-dot" id="bridgeDot"></span>
+        <span id="bridgeLabel" data-i18n="bridgeConnecting">正在连接本地服务</span>
+      </div>
     </div>
   </header>
 
   <main class="workspace">
     <aside class="setup-panel">
       <section class="panel-section">
-        <div class="section-heading">
-          <h2 data-i18n="sessionSetup">会话设置</h2>
-          <span class="mode-label">BBN</span>
-        </div>
-        <div class="metadata-row"><span data-i18n="participant">受试者</span><strong id="participantId">TEST-001</strong></div>
-        <div class="metadata-row"><span data-i18n="sessionId">会话编号</span><strong id="sessionId">待生成</strong></div>
-        <button class="secondary-button full-width" id="newSessionButton" type="button" data-i18n="newSession">生成新会话</button>
-      </section>
-
-      <section class="panel-section">
-        <label class="field-label" data-i18n="patientMode">患者交互模式</label>
+        <h2 data-i18n="sessionSetup">会话设置</h2>
+        <label class="field-label first-field-label" data-i18n="patientMode">患者交互模式</label>
         <div class="segmented" role="group" data-i18n-aria="patientMode">
-          <button class="segment active" data-condition="adaptive" type="button" data-i18n="modeAdaptive">自适应患者</button>
-          <button class="segment" data-condition="control" type="button" data-i18n="modeFixed">固定 Level 3</button>
+          <button class="segment active" data-condition="adaptive" type="button" data-i18n="modeAdaptive">自适应</button>
+          <button class="segment" data-condition="control" type="button" data-i18n="modeFixed">非自适应</button>
         </div>
         <label class="field-label" data-i18n="conversationLanguage">交流语言</label>
         <div class="segmented" role="group" data-i18n-aria="conversationLanguage">
           <button class="segment active" data-language="zh" type="button">中文</button>
           <button class="segment" data-language="en" type="button">English</button>
         </div>
-        <div class="setting-line">
-          <div><strong data-i18n="saveAudio">保存会话音频</strong><span data-i18n="audioFormats">医生与患者 WAV</span></div>
-          <span class="toggle checked" data-i18n-aria="saveAudio"></span>
+        <label class="field-label" for="patientTemplateSelect" data-i18n="patientTemplate">患者设定</label>
+        <select class="select-control" id="patientTemplateSelect"></select>
+        <button class="secondary-button full-width profile-use-button" id="confirmPatientTemplateButton" type="button" data-i18n="usePatientAndNewSession" disabled>使用此患者</button>
+
+        <div class="patient-profile-actions">
+        <button class="secondary-button full-width researcher-button" id="researcherProfileButton" type="button" data-i18n="researcherProfile">查看患者设定</button>
+          <button class="danger-button" id="deleteSelectedPatientTemplateButton" type="button" data-i18n="deletePatientTemplate" disabled>Delete Patient</button>
         </div>
-        <button class="secondary-button full-width researcher-button" id="researcherProfileButton" type="button" data-i18n="researcherProfile">研究者查看患者设定</button>
       </section>
 
       <section class="panel-section connection-list">
@@ -61,24 +62,34 @@
       </section>
 
       <div class="control-stack">
+        <div class="setting-line audio-setting">
+          <div><strong data-i18n="saveAudio">保存会话音频</strong><span data-i18n="audioFormats">医生与患者 WAV</span></div>
+          <button class="toggle" id="retainAudioSwitch" role="switch" aria-checked="false" type="button" data-i18n-aria="saveAudio"></button>
+        </div>
         <button class="primary-button full-width" id="startButton" type="button" data-i18n="startConversation">开始对话</button>
         <div class="control-row">
-          <button class="secondary-button" id="stopButton" type="button" disabled data-i18n="stop">停止</button>
-          <button class="danger-button" id="resetButton" type="button" data-i18n="forceReset">强制重置</button>
+          <button class="danger-button session-stop-button" id="stopButton" type="button" disabled data-i18n="stop">停止</button>
+          <button class="secondary-button new-session-button" id="newParticipantSessionButton" type="button" data-i18n="newParticipantSession">生成新会话</button>
         </div>
       </div>
     </aside>
 
     <section class="conversation-panel">
       <div class="conversation-header">
-        <div><span class="eyebrow">BREAKING BAD NEWS</span><h1 data-i18n="scenarioTitle">坏消息告知模拟</h1></div>
-        <div class="voice-state" id="voiceState"><span class="pulse-ring"></span><span id="voiceStateText" data-i18n="notStarted">尚未开始</span></div>
+        <div class="conversation-heading">
+          <div><span class="eyebrow">BREAKING BAD NEWS</span><h1 data-i18n="scenarioTitle">坏消息告知模拟</h1></div>
+          <div class="patient-presence">
+            <img src="/assets/virtual-patient-mr-zhang.png" alt="" aria-hidden="true">
+            <div><strong id="patientPresenceName">肺部检查异常复诊（张老师）</strong><span data-i18n="virtualPatient">虚拟患者</span></div>
+          </div>
+        </div>
+        <div class="voice-state" id="voiceState"><span class="voice-indicator" aria-hidden="true"><i></i><i></i><i></i></span><span id="voiceStateText" data-i18n="notStarted">尚未开始</span></div>
       </div>
       <div class="transcript" id="transcript" aria-live="polite">
         <div class="empty-state" id="emptyState">
           <div class="mic-symbol" aria-hidden="true"></div>
           <h2 data-i18n="emptyTitle">准备进行实时语音对话</h2>
-          <p data-i18n="emptyBody">开始后直接与虚拟患者说话。系统会自动转写、回复并在后台完成评分。</p>
+          <p data-i18n="emptyBodyAdaptive">开始后直接与虚拟患者说话。系统会自动转写、回复并在后台完成评分。</p>
         </div>
       </div>
       <div class="live-strip">
@@ -89,7 +100,7 @@
 
     <aside class="monitor-panel">
       <section class="metric-section state-section">
-        <div class="section-heading"><h2 data-i18n="interactionState">互动状态</h2><span class="condition-badge" id="conditionBadge">自适应</span></div>
+        <div class="section-heading"><h2 id="interactionStateHeading" data-i18n="interactionState">互动状态</h2><span class="condition-badge" id="conditionBadge">自适应</span></div>
         <div class="level-display">
           <div><span>LEVEL</span><strong id="levelValue">3</strong></div>
           <div><strong id="styleName">Concerned / Downcast</strong><span id="styleDescription">担忧 / 低落</span></div>
@@ -99,7 +110,7 @@
         <p class="mode-explanation" id="modeExplanation">CPAS评分会更新RSTM并改变患者互动状态。</p>
       </section>
 
-      <section class="metric-section score-section">
+      <section class="metric-section score-section" id="scoreSection">
         <div class="section-heading"><h2 data-i18n="cpasScore">CPAS评分</h2><span class="status-tag" id="gradeStatus" data-grade-status="none">尚无评分</span></div>
         <div class="score-display"><strong id="scoreValue">--</strong><span data-i18n="scoreRange">范围 -8 至 +5</span></div>
         <div class="track-summary">
@@ -119,28 +130,52 @@
 
       <section class="metric-section trajectory-section">
         <div class="section-heading"><h2 data-i18n="rstmTrajectory">RSTM轨迹</h2><span id="turnCount">0轮</span></div>
-        <canvas id="trajectory" width="520" height="220" aria-label="RSTM状态轨迹"></canvas>
+        <canvas id="trajectory" width="520" height="220" data-i18n-aria="rstmTrajectoryAria" aria-label="RSTM状态轨迹，纵轴为S(t)，范围-1至+1"></canvas>
       </section>
 
-      <section class="metric-section audit-section">
-        <div class="section-heading"><h2 data-i18n="sessionLog">会话记录</h2><span id="audioStatus" data-i18n="audioPending">音频待保存</span></div>
+      <details class="metric-section audit-section" id="auditSection">
+        <summary class="section-heading collapsible-heading">
+          <h2 data-i18n="systemEvents">运行记录</h2>
+          <span class="heading-meta"><span id="audioStatus" data-i18n="audioNotRetained">音频不保存</span><i class="collapse-chevron" aria-hidden="true"></i></span>
+        </summary>
         <div class="audit-log" id="auditLog"><p data-i18n="logWaiting">等待会话开始。</p></div>
-      </section>
+      </details>
     </aside>
   </main>
 
   <dialog class="profile-dialog" id="patientProfileDialog">
     <div class="profile-dialog-shell">
       <header>
-        <div><h2 data-i18n="profileTitle">模拟患者完整设定</h2><p data-i18n="profileSource">研究者信息 · 来源：冻结患者设定文件</p></div>
+        <div><h2 data-i18n="profileTitle">患者设定与模板</h2><p data-i18n="profileSource">默认病例保持冻结；自定义模板仅保存在本机浏览器</p></div>
         <button class="icon-button" id="closePatientProfileButton" type="button" data-i18n-aria="close">×</button>
       </header>
-      <pre id="patientProfileText" data-i18n="profileLoading">正在读取患者设定…</pre>
+      <div class="profile-dialog-content">
+        <section id="defaultProfileView">
+          <pre id="patientProfileText" data-i18n="profileLoading">正在读取患者设定…</pre>
+        </section>
+        <form id="patientTemplateForm" hidden>
+          <label><span data-i18n="templateName">模板名称（可选）</span><input id="patientTemplateName" maxlength="40" data-i18n-placeholder="templateNamePlaceholder" placeholder="留空时根据临床事实自动生成"></label>
+          <label><span data-i18n="identityBackground">患者身份与背景</span><textarea data-profile-field="identity_background" maxlength="2000" data-i18n-placeholder="identityBackgroundPlaceholder" placeholder="例如：58岁，高中教师，已婚，有一名女儿"></textarea></label>
+          <label><span data-i18n="clinicalFacts">临床事实</span><textarea data-profile-field="clinical_facts" maxlength="2000" required data-i18n-placeholder="clinicalFactsPlaceholder" placeholder="必填，例如：CT提示右上肺异常，等待活检确认"></textarea></label>
+          <label><span data-i18n="familySocialContext">家庭与社会背景</span><textarea data-profile-field="family_social_context" maxlength="2000" data-i18n-placeholder="familySocialContextPlaceholder" placeholder="例如：主要照顾年迈母亲，经济压力一般"></textarea></label>
+          <label><span data-i18n="knowledgeConcerns">已知信息与主要担忧</span><textarea data-profile-field="knowledge_concerns" maxlength="2000" data-i18n-placeholder="knowledgeConcernsPlaceholder" placeholder="例如：知道检查异常，担心是否为恶性疾病"></textarea></label>
+          <label><span data-i18n="disclosureBoundaries">信息透露边界</span><textarea data-profile-field="disclosure_boundaries" maxlength="2000" data-i18n-placeholder="disclosureBoundariesPlaceholder" placeholder="例如：未被询问时不主动透露家庭压力"></textarea></label>
+          <label><span data-i18n="openingPresentation">开场表现</span><textarea data-profile-field="opening_presentation" maxlength="2000" data-i18n-placeholder="openingPresentationPlaceholder" placeholder="例如：神情紧张，等待医生先开口"></textarea></label>
+          <label><span data-i18n="responseBoundaries">患者反应边界</span><textarea data-profile-field="response_boundaries" maxlength="2000" data-i18n-placeholder="responseBoundariesPlaceholder" placeholder="例如：解释清楚且有共情时逐渐愿意交流"></textarea></label>
+        </form>
+        <div class="profile-actions">
+          <button class="secondary-button" id="createPatientTemplateButton" type="button" data-i18n="createPatientTemplate">新建自定义模板</button>
+          <button class="secondary-button" id="cloneDefaultProfileButton" type="button" data-i18n="cloneDefaultProfile">复制默认病例</button>
+          <button class="danger-button" id="deletePatientTemplateButton" type="button" data-i18n="deletePatientTemplate" hidden>删除模板</button>
+          <button class="secondary-button" id="savePatientTemplateButton" type="button" data-i18n="savePatientTemplate" hidden>保存设定</button>
+          <button class="primary-button" id="activatePatientTemplateButton" type="button" data-i18n="usePatientAndNewSession">使用此患者</button>
+        </div>
+      </div>
     </div>
   </dialog>
 
   <div class="toast" id="toast" role="alert"></div>
-  <script src="/ui-model.js"></script>
-  <script src="/app.js"></script>
+  <script src="/ui-model.js?v=20260729-15"></script>
+  <script src="/app.js?v=20260729-15"></script>
 </body>
 </html>

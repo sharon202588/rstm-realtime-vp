@@ -106,7 +106,7 @@ def test_audio_mode_commits_final_asr_without_sending_chat_text_query():
 
         assert session.dialogue_history == [
             {
-                "turn_id": "D-0001",
+                "turn_id": "D-01",
                 "role": "Doctor",
                 "content": "您现在对检查结果了解多少？",
             }
@@ -131,7 +131,7 @@ def test_chat_response_fragments_commit_one_patient_turn():
 
         assert session.dialogue_history == [
             {
-                "turn_id": "P-0001",
+                "turn_id": "P-01",
                 "role": "Patient",
                 "content": "我只知道 肺部有阴影。",
             }
@@ -201,10 +201,17 @@ def test_unscorable_asr_displays_zero_without_state_update():
     asyncio.run(scenario())
 
 
-def test_non_adaptive_valid_grade_does_not_change_level_three():
+def test_non_adaptive_session_never_starts_or_calls_cpas():
     async def scenario():
-        session = make_session(adaptive=False)
+        grader = FakeGrader()
+        events = []
+        session = make_session(adaptive=False, grader=grader, event_sink=events.append)
         await session.start()
+        opening_style = session.ws_client.started_sessions[0]["speaking_style"]
+        assert "Level 3" in opening_style
+        assert "仅用于开场" in opening_style
+        assert "后续" in opening_style
+        assert "自然回应" in opening_style
         await session.handle_doubao_event(
             {
                 "type": "ASRResponse",
@@ -216,9 +223,60 @@ def test_non_adaptive_valid_grade_does_not_change_level_three():
         await session.handle_doubao_event({"type": "ASREnded"})
         await session.wait_until_grades_idle()
 
+        assert grader.prompts == []
+        assert session.pending_grade_count == 0
+        assert not [event for event in events if event.get("type") == "grade"]
         assert session.current_state == -0.25
         assert session.current_style["level"] == 3
         await session.stop()
 
     asyncio.run(scenario())
 
+
+def test_hundredth_complete_exchange_stops_only_after_tts_ended():
+    async def scenario():
+        events = []
+        session = make_session(adaptive=False, event_sink=events.append)
+        await session.start()
+        session._doctor_counter = 99
+        session._patient_counter = 99
+
+        await session.handle_doubao_event(
+            {
+                "type": "ASRResponse",
+                "results": [{"is_interim": False, "text": "这是最后一个问题。"}],
+            }
+        )
+        await session.handle_doubao_event({"type": "ASREnded"})
+        await session.handle_doubao_event(
+            {"type": "ChatResponse", "reply_id": "R100", "content": "这是最后一次回答。"}
+        )
+        await session.handle_doubao_event({"type": "ChatEnded", "reply_id": "R100"})
+
+        assert session.is_started is True
+        assert [turn["turn_id"] for turn in session.dialogue_history] == ["D-100", "P-100"]
+        assert not [
+            event
+            for event in events
+            if event.get("type") == "session" and event.get("status") == "limit_reached"
+        ]
+
+        await session.handle_doubao_event({"type": "TTSEnded", "reply_id": "R100"})
+        for _ in range(20):
+            if not session.is_started:
+                break
+            await asyncio.sleep(0)
+
+        statuses = [
+            event.get("status")
+            for event in events
+            if event.get("type") == "session"
+        ]
+        assert "limit_reached" in statuses
+        assert statuses[-1] == "stopped"
+        assert session.is_started is False
+
+        await session._commit_doctor_turn()
+        assert [turn["turn_id"] for turn in session.dialogue_history] == ["D-100", "P-100"]
+
+    asyncio.run(scenario())

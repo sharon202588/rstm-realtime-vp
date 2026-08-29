@@ -116,7 +116,11 @@ class DialogueManager:
         scenario_label = {
             "breaking_bad_news": "breaking bad news communication",
         }.get(self.scenario, self.scenario)
-        condition = "RSTM-enabled adaptive" if self.adaptive_enabled else "non-adaptive neutral"
+        condition = (
+            "RSTM-enabled adaptive"
+            if self.adaptive_enabled
+            else "non-adaptive; opening style only, then no Level constraint"
+        )
         return (
             "\n\nRuntime configuration:\n"
             f"- Scenario: {scenario_label}\n"
@@ -194,6 +198,10 @@ class DialogueManager:
         Returns:
             包含处理结果的字典
         """
+        opening_patient_response = not any(
+            turn.get("role") == "Patient" for turn in self.dialogue_history
+        )
+
         # 添加医生发言到历史
         self.add_dialogue_turn("Doctor", doctor_message)
         
@@ -215,11 +223,15 @@ class DialogueManager:
             else self.fixed_style_state
         )
         style_info = StyleMapper.map_state_to_style(current_state)
-        style_prompt = (
-            StyleMapper.get_style_prompt(current_state)
-            if self.adaptive_enabled
-            else ""
-        )  # 用于约束实时语音模型输出
+        if self.adaptive_enabled:
+            style_prompt = StyleMapper.get_style_prompt(current_state)
+        elif opening_patient_response:
+            style_prompt = StyleMapper.get_opening_only_style_prompt(
+                current_state,
+                self.language,
+            )
+        else:
+            style_prompt = ""
         
         # 生成患者回应（不等待评分）
         if use_voice and self.ws_client:
@@ -251,9 +263,24 @@ class DialogueManager:
             await self.on_patient_response(patient_response, style_info)
         
         # ============================================
+        if not self.adaptive_enabled:
+            result["phase_c"] = {
+                "adaptive_enabled": False,
+                "state": self.fixed_style_state,
+                "cci": None,
+                "turn": self.state_manager.turn_count,
+                "skipped": "non-adaptive condition",
+            }
+            result["phase_d"] = {
+                "state": self.fixed_style_state,
+                "style": style_info,
+                "style_prompt": style_prompt,
+                "purpose": "Opening style only; no subsequent Level constraint",
+            }
+
         # Phase B: 后台评分（异步执行）
         # ============================================
-        if self.rest_client:
+        if self.rest_client and self.adaptive_enabled:
             try:
                 dialogue_text = self.format_dialogue_history()
                 grade_result = self.rest_client.grade_dialogue(

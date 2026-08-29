@@ -230,6 +230,21 @@ class StyleMapper:
 保持自然、真实，不要过度表演。"""
         
         return prompt
+
+    @classmethod
+    def get_opening_only_style_prompt(cls, state: float, language: str = "zh") -> str:
+        """Build a style instruction that applies only to the opening response."""
+        style = cls.map_state_to_style(state)
+        cues = ", ".join(style.get("behavioral_cues", []))
+
+        if language == "en":
+            return f"""Opening interaction style (opening only): {style['name']} (Level {style['level']}).
+For the patient's first response, use the following cues naturally: {cues}.
+After the first patient response, this instruction no longer constrains the interaction state. Respond naturally based only on the fixed patient profile and prior dialogue. Do not deliberately maintain, raise, or lower any Level, and do not simulate RSTM state transitions."""
+
+        return f"""开场互动风格（仅用于开场）：{style['name']}（Level {style['level']}，{style['description']}）。
+患者首次回应时自然体现以下特征：{cues}。
+完成首次患者回应后，本指令不再限定后续互动状态。之后仅依据固定患者设定和既往对话自然回应；不要刻意维持、提升或降低任何Level，也不要模拟RSTM状态转换。"""
     
     @classmethod
     def get_all_styles(cls) -> List[Dict]:

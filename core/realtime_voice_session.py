@@ -11,6 +11,11 @@ from typing import Any, Awaitable, Callable, Optional
 
 from core.audio_storage import PcmWaveWriter
 from core.grading import GradingJob, format_grader_prompt, normalize_grade_result
+from core.patient_profiles import (
+    DEFAULT_PROFILE_ID,
+    DEFAULT_PROFILE_NAME,
+    resolve_patient_profile,
+)
 from rstm.state_manager import RSTMStateManager
 from rstm.style_mapper import StyleMapper
 
@@ -33,6 +38,9 @@ class VoiceSessionConfig:
     retain_audio: bool = True
     state_file: Optional[str] = None
     patient_profile_path: Optional[str] = None
+    patient_profile_id: str = DEFAULT_PROFILE_ID
+    patient_profile_name: str = DEFAULT_PROFILE_NAME
+    patient_profile_text: Optional[str] = None
     audio_root: str = "logs"
 
 
@@ -41,6 +49,7 @@ class RealtimeVoiceSession:
 
     STYLE_UPDATE_ACK_TIMEOUT_SECONDS = 0.75
     SPEECH_END_SILENCE_MS = 1500
+    MAX_COMPLETE_EXCHANGES = 100
 
     def __init__(
         self,
@@ -89,14 +98,17 @@ class RealtimeVoiceSession:
         self._response_active = False
         self._clinician_audio: Optional[PcmWaveWriter] = None
         self._patient_audio: Optional[PcmWaveWriter] = None
+        self._turn_limit_reached = False
+        self._auto_stop_task: Optional[asyncio.Task] = None
 
-        project_root = Path(__file__).parent.parent
-        profile_path = (
-            Path(config.patient_profile_path)
-            if config.patient_profile_path
-            else project_root / "specs" / "patient_profile.md"
+        (
+            self.patient_profile_id,
+            self.patient_profile_name,
+            self.patient_profile,
+        ) = resolve_patient_profile(
+            config,
+            Path(__file__).parent.parent,
         )
-        self.patient_profile = profile_path.read_text(encoding="utf-8")
 
     @staticmethod
     def _now() -> str:
@@ -141,7 +153,12 @@ class RealtimeVoiceSession:
         return f"{self.patient_profile}\n\n{language_instruction}{case_context}"
 
     def _speaking_style(self) -> str:
-        return StyleMapper.get_style_prompt(self.current_state)
+        if self.config.adaptive_enabled:
+            return StyleMapper.get_style_prompt(self.current_state)
+        return StyleMapper.get_opening_only_style_prompt(
+            self.fixed_style_state,
+            self.config.language,
+        )
 
     @staticmethod
     def _bot_name() -> str:
@@ -160,6 +177,8 @@ class RealtimeVoiceSession:
     async def start(self) -> None:
         if self._started:
             return
+        if self._turn_limit_reached:
+            raise RuntimeError("The 100-exchange session limit was reached. Start a new session.")
         self._stopping = False
         self._remote_audio_enabled = False
         if self.config.retain_audio:
@@ -170,7 +189,8 @@ class RealtimeVoiceSession:
             self._patient_audio = PcmWaveWriter(
                 audio_dir / "patient_session.wav", sample_rate=24000
             )
-        self._grade_worker_task = asyncio.create_task(self._grade_worker())
+        if self.config.adaptive_enabled:
+            self._grade_worker_task = asyncio.create_task(self._grade_worker())
         await self._emit({"type": "connection", "component": "doubao", "status": "connecting"})
         await self.ws_client.connect()
         await self._emit({"type": "connection", "component": "doubao", "status": "connected"})
@@ -217,7 +237,9 @@ class RealtimeVoiceSession:
         if event_type == "SessionStarted":
             self.dialog_id = message.get("dialog_id") or self.dialog_id
             async with self._audio_send_lock:
-                self._remote_audio_enabled = self._started and not self._stopping
+                self._remote_audio_enabled = (
+                    self._started and not self._stopping and not self._turn_limit_reached
+                )
             await self._emit(
                 {
                     "type": "connection",
@@ -267,6 +289,8 @@ class RealtimeVoiceSession:
             return
 
         if event_type == "ChatResponse":
+            if self._turn_limit_reached:
+                return
             self._response_active = True
             content = str(message.get("content", "")).strip()
             reply_id = str(message.get("reply_id") or self._active_reply_id or "reply")
@@ -289,6 +313,12 @@ class RealtimeVoiceSession:
             await self._commit_patient_turn(message.get("reply_id"))
             if event_type == "TTSEnded":
                 self._response_active = False
+                if self._turn_limit_reached:
+                    if not self._auto_stop_task or self._auto_stop_task.done():
+                        self._auto_stop_task = asyncio.create_task(
+                            self._finish_at_turn_limit()
+                        )
+                    return
                 await self._emit({"type": "connection", "component": "tts", "status": "idle"})
                 if self._refresh_needed and self._started:
                     self._schedule_remote_refresh()
@@ -326,23 +356,27 @@ class RealtimeVoiceSession:
             )
 
     async def _commit_doctor_turn(self) -> None:
+        if self._turn_limit_reached or self._patient_counter >= self.MAX_COMPLETE_EXCHANGES:
+            self._pending_asr_text = None
+            return
         doctor_text = (self._pending_asr_text or "").strip()
         self._pending_asr_text = None
         self._doctor_counter += 1
-        doctor_turn_id = f"D-{self._doctor_counter:04d}"
+        doctor_turn_id = self._turn_id("D", self._doctor_counter)
 
         if not doctor_text:
-            await self._emit(
-                {
-                    "type": "grade",
-                    "doctor_turn_id": doctor_turn_id,
-                    "display_score": 0,
-                    "control_score": None,
-                    "grading_status": "unscorable",
-                    "applied_to_rstm": False,
-                    "brief_rationale": "Final ASR text was unavailable.",
-                }
-            )
+            if self.config.adaptive_enabled:
+                await self._emit(
+                    {
+                        "type": "grade",
+                        "doctor_turn_id": doctor_turn_id,
+                        "display_score": 0,
+                        "control_score": None,
+                        "grading_status": "unscorable",
+                        "applied_to_rstm": False,
+                        "brief_rationale": "Final ASR text was unavailable.",
+                    }
+                )
             return
 
         preceding_history = tuple(dict(item) for item in self.dialogue_history)
@@ -353,6 +387,9 @@ class RealtimeVoiceSession:
         }
         self.dialogue_history.append(turn)
         await self._emit({"type": "transcript", "turn": turn})
+
+        if not self.config.adaptive_enabled:
+            return
 
         job = GradingJob(
             doctor_turn_id=doctor_turn_id,
@@ -380,9 +417,11 @@ class RealtimeVoiceSession:
         if not patient_text:
             return
 
+        if self._turn_limit_reached or self._patient_counter >= self.MAX_COMPLETE_EXCHANGES:
+            return
         self._patient_counter += 1
         turn = {
-            "turn_id": f"P-{self._patient_counter:04d}",
+            "turn_id": self._turn_id("P", self._patient_counter),
             "role": "Patient",
             "content": patient_text,
         }
@@ -390,6 +429,24 @@ class RealtimeVoiceSession:
         self._committed_reply_ids.add(resolved_reply_id)
         self._patient_parts.clear()
         await self._emit({"type": "transcript", "turn": turn})
+        if self._patient_counter >= self.MAX_COMPLETE_EXCHANGES:
+            self._turn_limit_reached = True
+            async with self._audio_send_lock:
+                self._remote_audio_enabled = False
+
+    @staticmethod
+    def _turn_id(prefix: str, counter: int) -> str:
+        return f"{prefix}-{counter:02d}" if counter < 100 else f"{prefix}-{counter}"
+
+    async def _finish_at_turn_limit(self) -> None:
+        await self._emit(
+            {
+                "type": "session",
+                "status": "limit_reached",
+                "completed_exchanges": self.MAX_COMPLETE_EXCHANGES,
+            }
+        )
+        await self.stop(reason="turn_limit")
 
     async def _grade_worker(self) -> None:
         while True:
@@ -602,10 +659,15 @@ class RealtimeVoiceSession:
     async def wait_until_grades_idle(self) -> None:
         await self._grade_queue.join()
 
-    async def stop(self) -> None:
+    async def stop(self, reason: Optional[str] = None) -> None:
         if self._stopping:
             return
         self._stopping = True
+        current_task = asyncio.current_task()
+        if self._auto_stop_task and self._auto_stop_task is not current_task:
+            self._auto_stop_task.cancel()
+            await asyncio.gather(self._auto_stop_task, return_exceptions=True)
+            self._auto_stop_task = None
         async with self._audio_send_lock:
             self._remote_audio_enabled = False
         if self._refresh_task:
@@ -643,7 +705,14 @@ class RealtimeVoiceSession:
         self._patient_audio = None
         if audio_files:
             await self._emit({"type": "audio", "retained": True, "files": audio_files})
-        await self._emit({"type": "session", "status": "stopped"})
+        await self._emit(
+            {
+                "type": "session",
+                "status": "stopped",
+                "reason": reason,
+                "completed_exchanges": self._patient_counter,
+            }
+        )
 
     async def reset(self) -> None:
         await self.stop()
@@ -657,6 +726,8 @@ class RealtimeVoiceSession:
         self._active_reply_id = None
         self._committed_reply_ids.clear()
         self._applied_grade_turn_ids.clear()
+        self._turn_limit_reached = False
+        self._auto_stop_task = None
         self._stopping = False
         await self._emit(
             {
@@ -666,4 +737,3 @@ class RealtimeVoiceSession:
                 "style": self.current_style,
             }
         )
-

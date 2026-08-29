@@ -58,11 +58,13 @@ def test_grader_prompt_separates_target_from_complete_preceding_history():
 
     prompt = format_grader_prompt(job)
 
-    assert GRADER_VERSION == "1.1"
+    assert GRADER_VERSION == "1.2"
     assert "D-0007" in prompt
     assert "您愿意现在听我说明检查结果吗？" in prompt
     assert "Patient: 我有些担心。" in prompt
     assert "Doctor: 您现在对检查了解多少？" in prompt
+    assert "deterministic CPAS grader" in prompt
+    assert "Stage-specific calibration" in prompt
     assert "turn 3 in this case" not in prompt
     assert "Turns 1 & 2" not in prompt
 
